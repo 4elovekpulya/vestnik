@@ -25,43 +25,80 @@ scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
 db = sqlite3.connect("concerts.db", check_same_thread=False)
 cur = db.cursor()
 
-# ===== КНОПКИ =====
-def user_keyboard(concert_id: int):
+cur.execute("""
+CREATE TABLE IF NOT EXISTS concerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    datetime TEXT,
+    description TEXT,
+    image_file_id TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS subscriptions (
+    user_id INTEGER,
+    concert_id INTEGER,
+    subscribed_at TEXT,
+    PRIMARY KEY (user_id, concert_id)
+)
+""")
+db.commit()
+
+# ---------- KEYBOARDS ----------
+def user_keyboard(cid: int):
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton("Напомнить", callback_data=f"sub:{concert_id}"),
-                InlineKeyboardButton("Отписаться", callback_data=f"unsub:{concert_id}")
-            ]
-        ]
+        inline_keyboard=[[
+            InlineKeyboardButton("Напомнить", callback_data=f"sub:{cid}"),
+            InlineKeyboardButton("Отписаться", callback_data=f"unsub:{cid}")
+        ]]
     )
 
 def admin_concerts_keyboard():
     cur.execute("SELECT id, datetime, description FROM concerts ORDER BY datetime")
     rows = cur.fetchall()
 
-    buttons = []
+    if not rows:
+        return None
+
+    kb = []
     for cid, dt, desc in rows:
         dt = datetime.fromisoformat(dt)
-        buttons.append([
+        kb.append([
             InlineKeyboardButton(
                 f"{dt.strftime('%d.%m %H:%M')} — {desc[:20]}",
                 callback_data=f"admin:concert:{cid}"
             )
         ])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+# ---------- HELPERS ----------
+def parse_dt(date_str, time_str):
+    return datetime.strptime(
+        f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
+    ).replace(tzinfo=MOSCOW_TZ)
 
-def admin_actions_keyboard(concert_id: int):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton("✏️ Изменить текст", callback_data=f"admin:text:{concert_id}")],
-            [InlineKeyboardButton("🖼 Изменить картинку", callback_data=f"admin:image:{concert_id}")],
-            [InlineKeyboardButton("👁 Предпросмотр", callback_data=f"admin:preview:{concert_id}")]
-        ]
-    )
+async def send_reminder(cid: int, title: str):
+    cur.execute("SELECT description, image_file_id FROM concerts WHERE id=?", (cid,))
+    row = cur.fetchone()
+    if not row:
+        return
 
-# ===== USER =====
+    desc, image = row
+    text = f"{title}\n\n{desc}"
+
+    cur.execute("SELECT user_id FROM subscriptions WHERE concert_id=?", (cid,))
+    users = cur.fetchall()
+
+    for (uid,) in users:
+        try:
+            if image:
+                await bot.send_photo(uid, image, caption=text)
+            else:
+                await bot.send_message(uid, text)
+        except:
+            pass
+
+# ---------- USER ----------
 @dp.message(Command("start"))
 async def start(message: Message):
     cur.execute("SELECT id, datetime, description, image_file_id FROM concerts ORDER BY datetime")
@@ -74,79 +111,72 @@ async def start(message: Message):
     for cid, dt, desc, image in concerts:
         dt = datetime.fromisoformat(dt)
         text = f"{dt.strftime('%d.%m.%Y %H:%M')}\n{desc}"
-
         if image:
             await message.answer_photo(image, caption=text, reply_markup=user_keyboard(cid))
         else:
             await message.answer(text, reply_markup=user_keyboard(cid))
 
-# ===== ADMIN =====
+# ---------- ADMIN ----------
 @dp.message(Command("admin"))
 async def admin(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    await message.answer(
-        "Выбери концерт:",
-        reply_markup=admin_concerts_keyboard()
-    )
+    kb = admin_concerts_keyboard()
+    if not kb:
+        await message.answer("Концертов пока нет. Добавь первый через /setconcert")
+        return
 
-@dp.callback_query(F.data.startswith("admin:concert:"))
-async def admin_select_concert(call: CallbackQuery):
-    cid = int(call.data.split(":")[2])
-    await call.message.answer(
-        "Действия с концертом:",
-        reply_markup=admin_actions_keyboard(cid)
-    )
+    await message.answer("Выбери концерт:", reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("admin:preview:"))
-async def admin_preview(call: CallbackQuery):
-    cid = int(call.data.split(":")[2])
-    cur.execute("SELECT datetime, description, image_file_id FROM concerts WHERE id=?", (cid,))
-    dt, desc, image = cur.fetchone()
-    dt = datetime.fromisoformat(dt)
-
-    text = f"{dt.strftime('%d.%m.%Y %H:%M')}\n{desc}"
-
-    if image:
-        await call.message.answer_photo(image, caption=text)
-    else:
-        await call.message.answer(text)
-
-# ===== SET IMAGE =====
-@dp.message(F.photo)
-async def admin_set_image(message: Message):
+@dp.message(Command("setconcert"))
+async def setconcert(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    state = message.caption
-    if not state or not state.startswith("IMAGE_FOR:"):
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
+        await message.answer("Формат: /setconcert YYYY-MM-DD HH:MM Описание")
         return
 
-    cid = int(state.split(":")[1])
-    file_id = message.photo[-1].file_id
+    dt = parse_dt(parts[1], parts[2])
+    desc = parts[3]
 
     cur.execute(
-        "UPDATE concerts SET image_file_id=? WHERE id=?",
-        (file_id, cid)
+        "INSERT INTO concerts (datetime, description) VALUES (?, ?)",
+        (dt.isoformat(), desc)
     )
+    cid = cur.lastrowid
     db.commit()
 
-    await message.answer("Картинка обновлена.")
+    scheduler.add_job(
+        send_reminder,
+        trigger="date",
+        run_date=dt.replace(hour=11, minute=0),
+        args=[cid, "Сегодня концерт"]
+    )
+    scheduler.add_job(
+        send_reminder,
+        trigger="date",
+        run_date=dt - timedelta(hours=1, minutes=30),
+        args=[cid, "До концерта осталось 1,5 часа"]
+    )
 
-# ===== SUBSCRIBE =====
+    await message.answer("Концерт добавлен.")
+
+# ---------- SUBSCRIBE ----------
 @dp.callback_query(F.data.startswith("sub:"))
-async def subscribe(call: CallbackQuery):
+async def sub(call: CallbackQuery):
     cid = int(call.data.split(":")[1])
     cur.execute(
         "INSERT OR IGNORE INTO subscriptions VALUES (?, ?, ?)",
         (call.from_user.id, cid, datetime.now(MOSCOW_TZ).isoformat())
     )
     db.commit()
-    await call.answer("Напоминание включено", show_alert=True)
+    await call.answer("Готово", show_alert=True)
 
 @dp.callback_query(F.data.startswith("unsub:"))
-async def unsubscribe(call: CallbackQuery):
+async def unsub(call: CallbackQuery):
     cid = int(call.data.split(":")[1])
     cur.execute(
         "DELETE FROM subscriptions WHERE user_id=? AND concert_id=?",
@@ -155,7 +185,7 @@ async def unsubscribe(call: CallbackQuery):
     db.commit()
     await call.answer("Вы отписались", show_alert=True)
 
-# ===== START =====
+# ---------- START ----------
 async def main():
     scheduler.start()
     await dp.start_polling(bot)

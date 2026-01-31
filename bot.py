@@ -24,7 +24,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
 
-# ===== БАЗА =====
+# ===== БАЗА ДАННЫХ =====
 db = sqlite3.connect("concerts.db", check_same_thread=False)
 cur = db.cursor()
 
@@ -49,28 +49,25 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 db.commit()
 
 # ===== КНОПКИ =====
-def concerts_list_keyboard():
-    cur.execute("SELECT id, description FROM concerts ORDER BY datetime")
-    rows = cur.fetchall()
-
-    keyboard = []
-    for concert_id, desc in rows:
-        keyboard.append([
-            InlineKeyboardButton(
-                text=desc,
-                callback_data=f"show:{concert_id}"
-            )
-        ])
-
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
+def select_concert_keyboard(concert_id: int, title: str):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=title, callback_data=f"concert:{concert_id}")]
+        ]
+    )
 
 def concert_keyboard(concert_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton("Напомнить", callback_data=f"sub:{concert_id}"),
-                InlineKeyboardButton("Отписаться", callback_data=f"unsub:{concert_id}")
+                InlineKeyboardButton(
+                    text="Напомнить",
+                    callback_data=f"sub:{concert_id}"
+                ),
+                InlineKeyboardButton(
+                    text="Отписаться",
+                    callback_data=f"unsub:{concert_id}"
+                )
             ]
         ]
     )
@@ -97,15 +94,20 @@ async def send_reminder(concert_id: int, text: str):
 # ===== КОМАНДЫ =====
 @dp.message(Command("start"))
 async def start(message: Message):
-    cur.execute("SELECT COUNT(*) FROM concerts")
-    if cur.fetchone()[0] == 0:
+    cur.execute("SELECT id, datetime, description FROM concerts ORDER BY datetime")
+    concerts = cur.fetchall()
+
+    if not concerts:
         await message.answer("Пока нет запланированных концертов.")
         return
 
-    await message.answer(
-        "Выбери концерт:",
-        reply_markup=concerts_list_keyboard()
-    )
+    await message.answer("Выбери концерт:")
+
+    for concert_id, dt_str, desc in concerts:
+        await message.answer(
+            desc,
+            reply_markup=select_concert_keyboard(concert_id, desc)
+        )
 
 @dp.message(Command("setconcert"))
 async def set_concert(message: Message):
@@ -114,15 +116,17 @@ async def set_concert(message: Message):
 
     parts = message.text.split(maxsplit=3)
     if len(parts) < 4:
-        await message.answer("Формат:\n/setconcert YYYY-MM-DD HH:MM Описание")
+        await message.answer("Формат: /setconcert YYYY-MM-DD HH:MM Описание")
         return
 
-    date_str, time_str, description = parts[1], parts[2], parts[3]
+    date_str = parts[1]
+    time_str = parts[2]
+    description = parts[3]
 
     try:
         dt = parse_dt(date_str, time_str)
     except ValueError:
-        await message.answer("Ошибка даты или времени.")
+        await message.answer("Ошибка даты или времени. Пример: 2026-02-15 19:30")
         return
 
     cur.execute(
@@ -132,6 +136,7 @@ async def set_concert(message: Message):
     concert_id = cur.lastrowid
     db.commit()
 
+    # Напоминание в день концерта в 11:00
     scheduler.add_job(
         send_reminder,
         trigger="date",
@@ -139,6 +144,7 @@ async def set_concert(message: Message):
         args=[concert_id, f"Сегодня концерт!\n\n{description}"]
     )
 
+    # Напоминание за 1.5 часа
     scheduler.add_job(
         send_reminder,
         trigger="date",
@@ -147,13 +153,36 @@ async def set_concert(message: Message):
     )
 
     await message.answer(
-        f"Концерт добавлен.\n\n"
-        f"Теперь пришли картинку **ответом на это сообщение**.",
-        parse_mode="Markdown"
+        "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
     )
 
+@dp.message(F.photo)
+async def save_image(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    cur.execute(
+        "SELECT id FROM concerts ORDER BY id DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+
+    if not row:
+        await message.answer("Нет концерта, к которому можно привязать картинку.")
+        return
+
+    concert_id = row[0]
+    photo = message.photo[-1]
+
+    cur.execute(
+        "UPDATE concerts SET image_file_id = ? WHERE id = ?",
+        (photo.file_id, concert_id)
+    )
+    db.commit()
+
+    await message.answer("Картинка сохранена для последнего концерта.")
+
 # ===== CALLBACKS =====
-@dp.callback_query(F.data.startswith("show:"))
+@dp.callback_query(F.data.startswith("concert:"))
 async def show_concert(call: CallbackQuery):
     concert_id = int(call.data.split(":")[1])
 
@@ -162,7 +191,9 @@ async def show_concert(call: CallbackQuery):
         (concert_id,)
     )
     row = cur.fetchone()
+
     if not row:
+        await call.answer("Концерт не найден", show_alert=True)
         return
 
     dt_str, desc, image_id = row
@@ -207,29 +238,6 @@ async def unsubscribe(call: CallbackQuery):
     db.commit()
 
     await call.answer("Вы отписались", show_alert=True)
-
-@dp.message(F.photo)
-async def save_concert_image(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    cur.execute(
-        "SELECT id FROM concerts ORDER BY id DESC LIMIT 1"
-    )
-    row = cur.fetchone()
-    if not row:
-        return
-
-    concert_id = row[0]
-    file_id = message.photo[-1].file_id
-
-    cur.execute(
-        "UPDATE concerts SET image_file_id = ? WHERE id = ?",
-        (file_id, concert_id)
-    )
-    db.commit()
-
-    await message.answer("Картинка сохранена для последнего концерта.")
 
 # ===== ЗАПУСК =====
 async def main():

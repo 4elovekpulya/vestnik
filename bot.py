@@ -1,15 +1,24 @@
 import asyncio
 import sqlite3
-from aiogram import Bot, Dispatcher, F
+from datetime import datetime, timedelta
+
+from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 
-TOKEN = "8566906143:AAEnKS_c7-oa7DxOr4fOra36CSooWn674GE"
-ADMIN_ID = 534395347  # твой telegram user_id
-CONCERT_TEXT = "Сегодня концерт. Ждём тебя."
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# === НАСТРОЙКИ КОНЦЕРТА ===
+CONCERT_DATETIME = datetime(2026, 2, 13, 19, 30)  # ГОД, МЕСЯЦ, ДЕНЬ, ЧАС, МИНУТА
+CONCERT_DESCRIPTION = "Концерт Краснову 50, на Курочина 5. Начало в 19:30."
+
+TOKEN = "ТВОЙ_TOKEN_ОТ_BOTFATHER"
+ADMIN_ID = 123456789
+# ==========================
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+scheduler = AsyncIOScheduler()
 
 db = sqlite3.connect("users.db")
 cur = db.cursor()
@@ -20,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 db.commit()
 
+
 @dp.message(Command("start"))
 async def start(message: Message):
     user_id = message.from_user.id
@@ -29,14 +39,13 @@ async def start(message: Message):
     cur.execute("SELECT COUNT(*) FROM users")
     count = cur.fetchone()[0]
 
-    await message.answer(
-        "Готово. Я напомню тебе в день концерта."
-    )
+    await message.answer("Готово. Я напомню тебе о концерте.")
 
     await bot.send_message(
         ADMIN_ID,
         f"+1 человек подписался. Всего: {count}"
     )
+
 
 @dp.message(Command("stats"))
 async def stats(message: Message):
@@ -47,23 +56,50 @@ async def stats(message: Message):
     count = cur.fetchone()[0]
     await message.answer(f"Всего подписались: {count}")
 
-async def send_concert_reminder():
+
+async def send_message_to_all(text: str):
     cur.execute("SELECT user_id FROM users")
     users = cur.fetchall()
 
     for (user_id,) in users:
         try:
-            await bot.send_message(user_id, CONCERT_TEXT)
+            await bot.send_message(user_id, text)
         except:
             pass
 
+
+async def reminder_morning():
+    text = (
+        "Сегодня концерт.\n\n"
+        f"{CONCERT_DESCRIPTION}"
+    )
+    await send_message_to_all(text)
+
+
+async def reminder_before():
+    text = (
+        "До концерта осталось 1,5 часа.\n\n"
+        f"{CONCERT_DESCRIPTION}"
+    )
+    await send_message_to_all(text)
+
+
 async def main():
-    asyncio.create_task(dp.start_polling(bot))
+    scheduler.add_job(
+        reminder_morning,
+        trigger="date",
+        run_date=CONCERT_DATETIME.replace(hour=11, minute=0)
+    )
 
-    # РАСКОММЕНТИРОВАТЬ В ДЕНЬ КОНЦЕРТА
-    # await send_concert_reminder()
+    scheduler.add_job(
+        reminder_before,
+        trigger="date",
+        run_date=CONCERT_DATETIME - timedelta(hours=1, minutes=30)
+    )
 
-    await asyncio.Event().wait()
+    scheduler.start()
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

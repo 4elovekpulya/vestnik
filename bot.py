@@ -2,17 +2,17 @@ import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 
-from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # === НАСТРОЙКИ КОНЦЕРТА ===
 CONCERT_DATETIME = datetime(2026, 2, 13, 19, 30)  # ГОД, МЕСЯЦ, ДЕНЬ, ЧАС, МИНУТА
-CONCERT_DESCRIPTION = "Концерт Краснову 50, на Курочина 5. Начало в 19:30."
+CONCERT_DESCRIPTION = "Концерт «Краснову 50» на Курочина 5. Начало в 19:30."
 
-TOKEN = "ТВОЙ_TOKEN_ОТ_BOTFATHER"
+TOKEN = "ТВОЙ_TOKEN"
 ADMIN_ID = 123456789
 # ==========================
 
@@ -30,16 +30,43 @@ CREATE TABLE IF NOT EXISTS users (
 db.commit()
 
 
+def reminder_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="Напомнить о концерте",
+                callback_data="subscribe"
+            )]
+        ]
+    )
+
+
 @dp.message(Command("start"))
 async def start(message: Message):
-    user_id = message.from_user.id
-    cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    await message.answer(
+        "Нажмите кнопку, чтобы получить напоминание о концерте.",
+        reply_markup=reminder_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "subscribe")
+async def subscribe(callback: CallbackQuery):
+    user_id = callback.from_user.id
+
+    cur.execute(
+        "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+        (user_id,)
+    )
     db.commit()
 
     cur.execute("SELECT COUNT(*) FROM users")
     count = cur.fetchone()[0]
 
-    await message.answer("Готово. Я напомню тебе о концерте.")
+    await callback.answer("Готово! Я напомню о концерте.")
+
+    await callback.message.edit_text(
+        "Вы подписаны на напоминание о концерте."
+    )
 
     await bot.send_message(
         ADMIN_ID,

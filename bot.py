@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # === НАСТРОЙКИ КОНЦЕРТА ===
-CONCERT_DATETIME = datetime(2026, 2, 13, 19, 30)  # ГОД, МЕСЯЦ, ДЕНЬ, ЧАС, МИНУТА
+CONCERT_DATETIME = datetime(2026, 1, 31, 18, 05)  # ГОД, МЕСЯЦ, ДЕНЬ, ЧАС, МИНУТА
 CONCERT_DESCRIPTION = "Концерт «Краснову 50» на Курочина 5. Начало в 19:30."
 
 TOKEN = "ТВОЙ_TOKEN"

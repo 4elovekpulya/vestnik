@@ -104,15 +104,20 @@ async def set_concert(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
+    parts = message.text.split(maxsplit=3)
+    if len(parts) < 4:
         await message.answer("Формат: /setconcert YYYY-MM-DD HH:MM Описание")
         return
 
-    date_str, time_str = parts[1].split()
-    description = parts[2]
+    date_str = parts[1]
+    time_str = parts[2]
+    description = parts[3]
 
-    dt = parse_dt(date_str, time_str)
+    try:
+        dt = parse_dt(date_str, time_str)
+    except ValueError:
+        await message.answer("Ошибка даты или времени. Пример: 2026-02-15 19:30")
+        return
 
     cur.execute(
         "INSERT INTO concerts (datetime, description) VALUES (?, ?)",

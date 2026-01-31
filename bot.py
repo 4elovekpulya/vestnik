@@ -136,7 +136,7 @@ async def set_concert(message: Message):
     scheduler.add_job(
         send_reminder,
         trigger="date",
-        run_date=dt - timedelta(hours=1, minutes=30),
+        run_date=dt - timedelta(minutes=2),
         args=[concert_id, f"Скоро концерт!\n\n{description}"]
     )
 

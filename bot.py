@@ -38,7 +38,9 @@ PENDING_IMAGE = {}
 ADMIN_ADD_MODE = {}
 
 # ===== БАЗА =====
-db = sqlite3.connect("concerts.db", check_same_thread=False)
+DB_PATH = os.getenv("DB_PATH", "concerts.db")
+
+db = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = db.cursor()
 
 cur.execute(
@@ -212,7 +214,9 @@ async def render_concert(chat, concert_id: int, user_id: int):
         await chat.answer("Концерт уже состоялся.", reply_markup=keyboard)
         return
 
-        text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
+        text = f"{desc}
+
+📅 {dt.strftime('%d.%m.%Y %H:%M')}"
 
     if image_id:
         await chat.answer_photo(
@@ -261,7 +265,9 @@ async def start(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await message.answer(
-                "Привет. Я напомню о предстоящих концертах.\n\n"
+                "Привет. Я напомню о предстоящих концертах.
+
+"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
     )

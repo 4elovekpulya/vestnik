@@ -203,7 +203,9 @@ async def start(message: Message):
     )
 
     await message.answer(
-        "Привет. Я напомню о предстоящих концертах.\n\n"
+        "Привет. Я напомню о предстоящих концертах.
+
+"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
     )
@@ -220,8 +222,23 @@ async def show_concerts(call: CallbackQuery):
     concerts = cur.fetchall()
 
     if not concerts:
-        await call.message.edit_text("Пока нет запланированных концертов.")
+        await call.message.delete()
+        await call.message.answer("Пока нет запланированных концертов.")
         await call.answer()
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
+            for cid, desc in concerts
+        ]
+    )
+
+    # важно: если текущее сообщение с картинкой, edit_text не сработает
+    # поэтому удаляем сообщение и отправляем новое
+    await call.message.delete()
+    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
+    await call.answer()
         return
 
     keyboard = InlineKeyboardMarkup(

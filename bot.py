@@ -79,21 +79,25 @@ def concert_keyboard(concert_id: int, user_id: int):
     )
     count = cur.fetchone()[0]
 
-    buttons = [
-        InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")
-    ]
+    buttons = []
 
     if is_subscribed:
-        buttons.extend([
-            InlineKeyboardButton(text="Напоминание включено", callback_data="noop"),
-            InlineKeyboardButton(text="Отписаться", callback_data=f"unsub:{concert_id}"),
-        ])
+        buttons.append(
+            InlineKeyboardButton(text="🔔 Напоминание включено", callback_data="noop")
+        )
+        buttons.append(
+            InlineKeyboardButton(text="Отписаться", callback_data=f"unsub:{concert_id}")
+        )
     else:
         buttons.append(
             InlineKeyboardButton(
-                text=f"Напомнить ({count})", callback_data=f"sub:{concert_id}"
+                text=f"🔔 Напомнить ({count})", callback_data=f"sub:{concert_id}"
             )
         )
+
+    buttons.append(
+        InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")
+    )
 
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
@@ -227,7 +231,7 @@ async def start(message: Message):
             await message.answer("Концерт уже состоялся.", reply_markup=keyboard)
             return
 
-        text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
+                text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
 
         if image_id:
             await message.answer_photo(
@@ -255,7 +259,7 @@ async def start(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await message.answer(
-        "Привет. Я напомню о предстоящих концертах.\n\n"
+                "Привет. Я напомню о предстоящих концертах.\n\n"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
     )

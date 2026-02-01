@@ -197,7 +197,7 @@ async def start(message: Message):
         ]
     )
 
-        await message.answer(
+    await message.answer(
         "Привет. Я напомню о предстоящих концертах.\n\n"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
@@ -205,6 +205,7 @@ async def start(message: Message):
 
 
 # ===== CALLBACK: ПОКАЗАТЬ КОНЦЕРТЫ =====
+
 @dp.callback_query(F.data == "show_concerts")
 async def show_concerts(call: CallbackQuery):
     cur.execute(

@@ -340,7 +340,18 @@ async def save_image(message: Message):
     db.commit()
 
     PENDING_IMAGE.pop(message.from_user.id, None)
-    await message.answer("Картинка сохранена для концерта.")
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")],
+            [InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")],
+        ]
+    )
+
+    await message.answer(
+        "Картинка сохранена для концерта.",
+        reply_markup=keyboard,
+    )
 
 
 # ===== CALLBACK: ВЫБОР КОНЦЕРТА =====

@@ -221,8 +221,15 @@ async def show_concerts(call: CallbackQuery):
 
     if not rows:
         await call.message.delete()
-        await call.message.answer("Пока нет запланированных концертов.")
+        await call.message.answer("Пока нет предстоящих концертов.")
         await call.answer()
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    await call.message.delete()
+    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
+    await call.answer()
         return
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)

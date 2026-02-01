@@ -14,6 +14,8 @@ from aiogram.types import (
 )
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import logging
+from aiogram.exceptions import TelegramForbiddenError, TelegramNotFound
 
 # ===== НАСТРОЙКИ =====
 TOKEN = os.getenv("BOT_TOKEN")
@@ -22,35 +24,43 @@ MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 REMINDER_OFFSET_MINUTES = 2
 # ====================
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
 
 # ===== FSM (ожидание картинки концерта) =====
 PENDING_IMAGE = {}
-(timezone=MOSCOW_TZ)
 
 # ===== БАЗА =====
 db = sqlite3.connect("concerts.db", check_same_thread=False)
 cur = db.cursor()
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS concerts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    datetime TEXT,
-    description TEXT,
-    image_file_id TEXT
+cur.execute(
+    """
+    CREATE TABLE IF NOT EXISTS concerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        datetime TEXT,
+        description TEXT,
+        image_file_id TEXT
+    )
+    """
 )
-""")
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS subscriptions (
-    user_id INTEGER,
-    concert_id INTEGER,
-    subscribed_at TEXT,
-    PRIMARY KEY (user_id, concert_id)
+cur.execute(
+    """
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        user_id INTEGER,
+        concert_id INTEGER,
+        subscribed_at TEXT,
+        PRIMARY KEY (user_id, concert_id)
+    )
+    """
 )
-""")
 
 db.commit()
 
@@ -62,18 +72,17 @@ def select_concert_keyboard(concert_id: int, title: str):
         ]
     )
 
+
 def concert_keyboard(concert_id: int, user_id: int):
-    # проверяем подписку пользователя
     cur.execute(
         "SELECT 1 FROM subscriptions WHERE user_id = ? AND concert_id = ?",
-        (user_id, concert_id)
+        (user_id, concert_id),
     )
     is_subscribed = cur.fetchone() is not None
 
-    # считаем общее количество подписок
     cur.execute(
         "SELECT COUNT(*) FROM subscriptions WHERE concert_id = ?",
-        (concert_id,)
+        (concert_id,),
     )
     count = cur.fetchone()[0]
 
@@ -81,55 +90,36 @@ def concert_keyboard(concert_id: int, user_id: int):
 
     if is_subscribed:
         buttons.append(
+            InlineKeyboardButton(text="Напоминание включено", callback_data="noop")
+        )
+        buttons.append(
             InlineKeyboardButton(
-                text="Напоминание включено",
-                callback_data="noop"
+                text="Отписаться", callback_data=f"unsub:{concert_id}"
             )
         )
     else:
         buttons.append(
             InlineKeyboardButton(
-                text=f"Напомнить ({count})",
-                callback_data=f"sub:{concert_id}"
-            )
-        )
-
-    if is_subscribed:
-        buttons.append(
-            InlineKeyboardButton(
-                text="Отписаться",
-                callback_data=f"unsub:{concert_id}"
+                text=f"Напомнить ({count})", callback_data=f"sub:{concert_id}"
             )
         )
 
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
-    )
-    count = cur.fetchone()[0]
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"Напомнить ({count})",
-                    callback_data=f"sub:{concert_id}"
-                ),
-                InlineKeyboardButton(
-                    text="Отписаться",
-                    callback_data=f"unsub:{concert_id}"
-                )
-            ]
-        ]
-    )
 
 # ===== ВСПОМОГАТЕЛЬНО =====
+def now_moscow():
+    return datetime.now(MOSCOW_TZ)
+
+
+def parse_dt(date_str, time_str):
+    return datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(
+        tzinfo=MOSCOW_TZ
+    )
+
 
 def schedule_concert_reminder(concert_id: int, concert_dt: datetime):
-    """
-    Создаёт job напоминания для концерта, если время ещё не прошло.
-    Используется как при добавлении концерта, так и при восстановлении scheduler.
-    """
     reminder_time = concert_dt - timedelta(minutes=REMINDER_OFFSET_MINUTES)
-
     if reminder_time <= now_moscow():
         return
 
@@ -144,77 +134,66 @@ def schedule_concert_reminder(concert_id: int, concert_dt: datetime):
 
 
 def restore_scheduler_from_db():
-    """
-    Восстанавливает все напоминания из БД при старте бота.
-    """
     cur.execute(
         "SELECT id, datetime FROM concerts WHERE datetime > ?",
-        (now_moscow().isoformat(),)
+        (now_moscow().isoformat(),),
     )
-    rows = cur.fetchall()
-
-    for concert_id, dt_str in rows:
+    for concert_id, dt_str in cur.fetchall():
         try:
-            concert_dt = datetime.fromisoformat(dt_str)
+            dt = datetime.fromisoformat(dt_str)
         except ValueError:
             continue
+        schedule_concert_reminder(concert_id, dt)
 
-        schedule_concert_reminder(concert_id, concert_dt)
-
-
-def parse_dt(date_str, time_str):
-    return datetime.strptime(
-        f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
-    ).replace(tzinfo=MOSCOW_TZ)
-
-def now_moscow():
-    return datetime.now(MOSCOW_TZ)
 
 async def send_reminder(concert_id: int):
-    # получаем картинку концерта
     cur.execute(
         "SELECT image_file_id, description, datetime FROM concerts WHERE id = ?",
-        (concert_id,)
+        (concert_id,),
     )
-    concert = cur.fetchone()
-    if not concert:
+    row = cur.fetchone()
+    if not row:
         return
 
-    image_id, description, dt_str = concert
+    image_id, description, dt_str = row
     dt = datetime.fromisoformat(dt_str)
 
     text = (
-        f"Скоро концерт!\n\n"
+        "Скоро концерт!\n\n"
         f"{description}\n"
         f"📅 {dt.strftime('%d.%m.%Y %H:%M')}"
     )
 
-    # получаем подписчиков
     cur.execute(
         "SELECT user_id FROM subscriptions WHERE concert_id = ?",
-        (concert_id,)
+        (concert_id,),
     )
-    users = cur.fetchall()
 
-    for (user_id,) in users:
+    for (user_id,) in cur.fetchall():
         try:
             if image_id:
-                await bot.send_photo(
-                    user_id,
-                    photo=image_id,
-                    caption=text
-                )
+                await bot.send_photo(user_id, photo=image_id, caption=text)
             else:
                 await bot.send_message(user_id, text)
-        except Exception:
-            pass
+        except (TelegramForbiddenError, TelegramNotFound):
+            cur.execute(
+                "DELETE FROM subscriptions WHERE user_id = ? AND concert_id = ?",
+                (user_id, concert_id),
+            )
+            db.commit()
+            logging.warning(
+                f"User {user_id} removed from subscriptions for concert {concert_id}"
+            )
+        except Exception as e:
+            logging.exception(f"Failed to send reminder to user {user_id}: {e}")
+
 
 # ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
     cur.execute(
         "SELECT id, description FROM concerts WHERE datetime > ? ORDER BY datetime",
-        (now_moscow().isoformat(),)
+        (now_moscow().isoformat(),),
     )
     concerts = cur.fetchall()
 
@@ -224,12 +203,13 @@ async def start(message: Message):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=desc, callback_data=f"concert:{concert_id}")]
-            for concert_id, desc in concerts
+            [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
+            for cid, desc in concerts
         ]
     )
 
     await message.answer("Выбери концерт:", reply_markup=keyboard)
+
 
 # ===== /setconcert (admin) =====
 @dp.message(Command("setconcert"))
@@ -250,23 +230,20 @@ async def set_concert(message: Message):
         await message.answer("Ошибка даты или времени.")
         return
 
-        cur.execute(
+    cur.execute(
         "INSERT INTO concerts (datetime, description) VALUES (?, ?)",
-        (dt.isoformat(), description)
+        (dt.isoformat(), description),
     )
-        concert_id = cur.lastrowid
+    concert_id = cur.lastrowid
     db.commit()
 
     schedule_concert_reminder(concert_id, dt)
-
-    # сохраняем ожидание картинки
     PENDING_IMAGE[message.from_user.id] = concert_id
-
-        schedule_concert_reminder(concert_id, dt)
 
     await message.answer(
         "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
     )
+
 
 # ===== СОХРАНЕНИЕ КАРТИНКИ =====
 @dp.message(F.photo)
@@ -283,14 +260,13 @@ async def save_image(message: Message):
 
     cur.execute(
         "UPDATE concerts SET image_file_id = ? WHERE id = ?",
-        (photo.file_id, concert_id)
+        (photo.file_id, concert_id),
     )
     db.commit()
 
-    # очищаем состояние
     PENDING_IMAGE.pop(message.from_user.id, None)
-
     await message.answer("Картинка сохранена для концерта.")
+
 
 # ===== CALLBACK: ВЫБОР КОНЦЕРТА =====
 @dp.callback_query(F.data.startswith("concert:"))
@@ -303,7 +279,7 @@ async def show_concert(call: CallbackQuery):
         FROM concerts
         WHERE id = ? AND datetime > ?
         """,
-        (concert_id, now_moscow().isoformat())
+        (concert_id, now_moscow().isoformat()),
     )
     row = cur.fetchone()
 
@@ -318,19 +294,16 @@ async def show_concert(call: CallbackQuery):
 
     if image_id:
         await call.message.edit_media(
-            InputMediaPhoto(
-                media=image_id,
-                caption=text
-            ),
-            reply_markup=concert_keyboard(concert_id, call.from_user.id)
+            InputMediaPhoto(media=image_id, caption=text),
+            reply_markup=concert_keyboard(concert_id, call.from_user.id),
         )
     else:
         await call.message.edit_text(
-            text,
-            reply_markup=concert_keyboard(concert_id, call.from_user.id)
+            text, reply_markup=concert_keyboard(concert_id, call.from_user.id)
         )
 
     await call.answer()
+
 
 # ===== CALLBACK: ПОДПИСКА =====
 @dp.callback_query(F.data.startswith("sub:"))
@@ -339,7 +312,7 @@ async def subscribe(call: CallbackQuery):
 
     cur.execute(
         "INSERT OR IGNORE INTO subscriptions VALUES (?, ?, ?)",
-        (call.from_user.id, concert_id, now_moscow().isoformat())
+        (call.from_user.id, concert_id, now_moscow().isoformat()),
     )
     db.commit()
 
@@ -348,10 +321,12 @@ async def subscribe(call: CallbackQuery):
     )
     await call.answer("Напоминание включено")
 
+
 # ===== CALLBACK: NOOP =====
 @dp.callback_query(F.data == "noop")
 async def noop_handler(call: CallbackQuery):
     await call.answer("Уже включено")
+
 
 # ===== CALLBACK: ОТПИСКА =====
 @dp.callback_query(F.data.startswith("unsub:"))
@@ -360,7 +335,7 @@ async def unsubscribe(call: CallbackQuery):
 
     cur.execute(
         "DELETE FROM subscriptions WHERE user_id = ? AND concert_id = ?",
-        (call.from_user.id, concert_id)
+        (call.from_user.id, concert_id),
     )
     db.commit()
 
@@ -369,11 +344,13 @@ async def unsubscribe(call: CallbackQuery):
     )
     await call.answer("Вы отписались")
 
+
 # ===== ЗАПУСК =====
 async def main():
     scheduler.start()
     restore_scheduler_from_db()
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

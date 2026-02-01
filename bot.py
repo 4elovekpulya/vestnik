@@ -182,21 +182,26 @@ async def send_reminder(concert_id: int):
 # ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
-    buttons = [
-        [InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]
-    ]
+    # сбрасываем временные состояния при любом входе
+    PENDING_IMAGE.pop(message.from_user.id, None)
+    ADMIN_ADD_MODE.pop(message.from_user.id, None)
 
-    if message.from_user.id == ADMIN_ID:
-        buttons.append(
-            [InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")]
-        )
+    parts = message.text.split(maxsplit=1)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await message.answer(
+    # ===== КОНТЕКСТНЫЙ ВХОД (deep-link) =====
+    if len(parts) == 2 and parts[1].startswith("concert_"):
+        payload = parts[1]
+        try:
+            concert_id = int(payload.replace("concert_", ""))
+        except ValueError:
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
+            )
+                await message.answer(
         "Привет. Я напомню о предстоящих концертах.\n\n"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
+    )ard,
     )
 
 

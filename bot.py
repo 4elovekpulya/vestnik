@@ -207,7 +207,7 @@ async def render_concert(chat, concert_id: int, user_id: int):
     dt_str, desc, image_id = row
     dt = datetime.fromisoformat(dt_str)
 
-        if dt <= now_moscow():
+    if dt <= now_moscow():
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
         )
@@ -232,13 +232,11 @@ async def render_concert(chat, concert_id: int, user_id: int):
 # ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
-    # сбрасываем временные состояния при любом входе
     PENDING_IMAGE.pop(message.from_user.id, None)
     ADMIN_ADD_MODE.pop(message.from_user.id, None)
 
     parts = message.text.split(maxsplit=1)
 
-    # ===== КОНТЕКСТНЫЙ ВХОД (deep-link) =====
     if len(parts) == 2 and parts[1].startswith("concert_"):
         try:
             concert_id = int(parts[1].replace("concert_", ""))
@@ -246,7 +244,20 @@ async def start(message: Message):
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
             )
-                await message.answer(
+            await message.answer("Концерт не найден.", reply_markup=keyboard)
+            return
+
+        await render_concert(message, concert_id, message.from_user.id)
+        return
+
+    buttons = [[InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]]
+
+    if message.from_user.id == ADMIN_ID:
+        buttons.append([InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
         "Привет. Я напомню о предстоящих концертах.\n\n"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,

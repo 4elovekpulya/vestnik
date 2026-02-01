@@ -207,14 +207,16 @@ async def render_concert(chat, concert_id: int, user_id: int):
     dt_str, desc, image_id = row
     dt = datetime.fromisoformat(dt_str)
 
-    if dt <= now_moscow():
+        if dt <= now_moscow():
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
         )
         await chat.answer("Концерт уже состоялся.", reply_markup=keyboard)
         return
 
-        text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"%M')}"
+    text = f"{desc}
+
+📅 {dt.strftime('%d.%m.%Y %H:%M')}"
 
     if image_id:
         await chat.answer_photo(
@@ -244,22 +246,11 @@ async def start(message: Message):
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
             )
-            await message.answer("Концерт не найден.", reply_markup=keyboard)
-            return
+                await message.answer(
+        "Привет. Я напомню о предстоящих концертах.
 
-        await render_concert(message, concert_id, message.from_user.id)
-        return
-
-    buttons = [[InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]]
-
-    if message.from_user.id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await message.answer(
-          "Привет. Я напомню о предстоящих концертах.\n\n"
-        "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание."ание.",
+"
+        "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
     )
 
@@ -342,7 +333,12 @@ async def set_concert(message: Message):
     PENDING_IMAGE[message.from_user.id] = concert_id
 
     await message.answer(
-   Концерт добавлен.\n\nСсылка для анонсов:\n{deeplink}\n\nТеперь пришли картинку ответом на это сообщение.щение."
+        "Концерт добавлен.
+
+Ссылка для анонсов:
+{deeplink}
+
+Теперь пришли картинку ответом на это сообщение."
     )
 
 
@@ -380,7 +376,12 @@ async def admin_add_text(message: Message):
     ADMIN_ADD_MODE.pop(message.from_user.id, None)
 
     await message.answer(
-   Концерт добавлен.\n\nСсылка для анонсов:\n{deeplink}\n\nТеперь пришли картинку ответом на это сообщение.щение."
+        "Концерт добавлен.
+
+Ссылка для анонсов:
+{deeplink}
+
+Теперь пришли картинку ответом на это сообщение."
     )
 
 

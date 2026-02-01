@@ -191,6 +191,22 @@ async def send_reminder(concert_id: int):
 # ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]
+        ]
+    )
+
+        await message.answer(
+        "Привет. Я напомню о предстоящих концертах.\n\n"
+        "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
+        reply_markup=keyboard,
+    )
+
+
+# ===== CALLBACK: ПОКАЗАТЬ КОНЦЕРТЫ =====
+@dp.callback_query(F.data == "show_concerts")
+async def show_concerts(call: CallbackQuery):
     cur.execute(
         "SELECT id, description FROM concerts WHERE datetime > ? ORDER BY datetime",
         (now_moscow().isoformat(),),
@@ -198,7 +214,8 @@ async def start(message: Message):
     concerts = cur.fetchall()
 
     if not concerts:
-        await message.answer("Пока нет запланированных концертов.")
+        await call.message.edit_text("Пока нет запланированных концертов.")
+        await call.answer()
         return
 
     keyboard = InlineKeyboardMarkup(
@@ -208,7 +225,8 @@ async def start(message: Message):
         ]
     )
 
-    await message.answer("Выбери концерт:", reply_markup=keyboard)
+    await call.message.edit_text("Выбери концерт:", reply_markup=keyboard)
+    await call.answer()
 
 
 # ===== /setconcert (admin) =====

@@ -35,6 +35,7 @@ scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
 
 # ===== FSM (ожидание картинки концерта) =====
 PENDING_IMAGE = {}
+ADMIN_ADD_MODE = {}
 
 # ===== БАЗА =====
 db = sqlite3.connect("concerts.db", check_same_thread=False)
@@ -65,10 +66,7 @@ cur.execute(
 db.commit()
 
 # ===== КНОПКИ =====
-
-# состояние добавления концерта администратором
-ADMIN_ADD_MODE = {}
-def concert_keyboard(concert_id: int, user_id: int):(concert_id: int, user_id: int):
+def concert_keyboard(concert_id: int, user_id: int):
     cur.execute(
         "SELECT 1 FROM subscriptions WHERE user_id = ? AND concert_id = ?",
         (user_id, concert_id),
@@ -97,7 +95,7 @@ def concert_keyboard(concert_id: int, user_id: int):(concert_id: int, user_id: i
             )
         )
 
-        return InlineKeyboardMarkup(inline_keyboard=[buttons])
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
 # ===== ВСПОМОГАТЕЛЬНО =====
@@ -232,19 +230,6 @@ async def show_concerts(call: CallbackQuery):
     await call.message.delete()
     await call.message.answer("Выбери концерт:", reply_markup=keyboard)
     await call.answer()
-        return
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
-            for cid, desc in concerts
-        ]
-    )
-
-    # всегда удаляем текущее сообщение (и текст, и медиа)
-    await call.message.delete()
-    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
-    await call.answer()
 
 
 # ===== CALLBACK: ДОБАВИТЬ КОНЦЕРТ (admin) =====
@@ -275,29 +260,6 @@ async def set_concert(message: Message):
         return
 
     date_str, time_str, description = parts
-
-    try:
-        dt = parse_dt(date_str, time_str)
-    except ValueError:
-        await message.answer("Ошибка даты или времени.")
-        return
-
-    cur.execute(
-        "INSERT INTO concerts (datetime, description) VALUES (?, ?)",
-        (dt.isoformat(), description),
-    )
-    concert_id = cur.lastrowid
-    db.commit()
-
-    schedule_concert_reminder(concert_id, dt)
-    PENDING_IMAGE[message.from_user.id] = concert_id
-
-    await message.answer(
-        "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
-    )
-        return
-
-    date_str, time_str, description = parts[1], parts[2], parts[3]
 
     try:
         dt = parse_dt(date_str, time_str)

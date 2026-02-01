@@ -19,6 +19,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+REMINDER_OFFSET_MINUTES = 2
 # ====================
 
 bot = Bot(token=TOKEN)
@@ -85,7 +86,29 @@ def parse_dt(date_str, time_str):
         f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
     ).replace(tzinfo=MOSCOW_TZ)
 
-async def send_reminder(concert_id: int, text: str):
+def now_moscow():
+    return datetime.now(MOSCOW_TZ)
+
+async def send_reminder(concert_id: int):
+    # получаем картинку концерта
+    cur.execute(
+        "SELECT image_file_id, description, datetime FROM concerts WHERE id = ?",
+        (concert_id,)
+    )
+    concert = cur.fetchone()
+    if not concert:
+        return
+
+    image_id, description, dt_str = concert
+    dt = datetime.fromisoformat(dt_str)
+
+    text = (
+        f"Скоро концерт!\n\n"
+        f"{description}\n"
+        f"📅 {dt.strftime('%d.%m.%Y %H:%M')}"
+    )
+
+    # получаем подписчиков
     cur.execute(
         "SELECT user_id FROM subscriptions WHERE concert_id = ?",
         (concert_id,)
@@ -94,18 +117,23 @@ async def send_reminder(concert_id: int, text: str):
 
     for (user_id,) in users:
         try:
-            await bot.send_message(user_id, text)
+            if image_id:
+                await bot.send_photo(
+                    user_id,
+                    photo=image_id,
+                    caption=text
+                )
+            else:
+                await bot.send_message(user_id, text)
         except Exception:
             pass
 
 # ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
-    now = datetime.now(MOSCOW_TZ).isoformat()
-
     cur.execute(
         "SELECT id, description FROM concerts WHERE datetime > ? ORDER BY datetime",
-        (now,)
+        (now_moscow().isoformat(),)
     )
     concerts = cur.fetchall()
 
@@ -147,19 +175,15 @@ async def set_concert(message: Message):
     concert_id = cur.lastrowid
     db.commit()
 
-    scheduler.add_job(
-        send_reminder,
-        trigger="date",
-        run_date=dt.replace(hour=11, minute=0),
-        args=[concert_id, f"Сегодня концерт!\n\n{description}"]
-    )
+    reminder_time = dt - timedelta(minutes=REMINDER_OFFSET_MINUTES)
 
-    scheduler.add_job(
-        send_reminder,
-        trigger="date",
-        run_date=dt - timedelta(minutes=90),
-        args=[concert_id, f"Скоро концерт!\n\n{description}"]
-    )
+    if reminder_time > now_moscow():
+        scheduler.add_job(
+            send_reminder,
+            trigger="date",
+            run_date=reminder_time,
+            args=[concert_id]
+        )
 
     await message.answer(
         "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
@@ -173,7 +197,6 @@ async def save_image(message: Message):
 
     cur.execute("SELECT id FROM concerts ORDER BY id DESC LIMIT 1")
     row = cur.fetchone()
-
     if not row:
         return
 
@@ -199,7 +222,7 @@ async def show_concert(call: CallbackQuery):
         FROM concerts
         WHERE id = ? AND datetime > ?
         """,
-        (concert_id, datetime.now(MOSCOW_TZ).isoformat())
+        (concert_id, now_moscow().isoformat())
     )
     row = cur.fetchone()
 
@@ -235,14 +258,14 @@ async def subscribe(call: CallbackQuery):
 
     cur.execute(
         "INSERT OR IGNORE INTO subscriptions VALUES (?, ?, ?)",
-        (call.from_user.id, concert_id, datetime.now(MOSCOW_TZ).isoformat())
+        (call.from_user.id, concert_id, now_moscow().isoformat())
     )
     db.commit()
 
     await call.message.edit_reply_markup(
         reply_markup=concert_keyboard(concert_id)
     )
-    await call.answer("Вы подписались")
+    await call.answer("Напоминание включено")
 
 # ===== CALLBACK: ОТПИСКА =====
 @dp.callback_query(F.data.startswith("unsub:"))

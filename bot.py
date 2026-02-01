@@ -201,66 +201,11 @@ async def start(message: Message):
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
             )
-            await message.answer("Концерт не найден.", reply_markup=keyboard)
-            return
-
-        cur.execute(
-            """
-            SELECT datetime, description, image_file_id
-            FROM concerts
-            WHERE id = ?
-            """,
-            (concert_id,),
-        )
-        row = cur.fetchone()
-
-        if not row:
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
-            )
-            await message.answer("Концерт не найден.", reply_markup=keyboard)
-            return
-
-        dt_str, desc, image_id = row
-        dt = datetime.fromisoformat(dt_str)
-
-        if dt <= now_moscow():
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")]]
-            )
-            await message.answer("Концерт уже состоялся.", reply_markup=keyboard)
-            return
-
-                text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
-
-        if image_id:
-            await message.answer_photo(
-                photo=image_id,
-                caption=text,
-                reply_markup=concert_keyboard(concert_id, message.from_user.id),
-            )
-        else:
-            await message.answer(
-                text,
-                reply_markup=concert_keyboard(concert_id, message.from_user.id),
-            )
-        return
-
-    # ===== НЕЙТРАЛЬНЫЙ ВХОД =====
-    buttons = [
-        [InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]
-    ]
-
-    if message.from_user.id == ADMIN_ID:
-        buttons.append(
-            [InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")]
-        )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await message.answer(
-                "Привет. Я напомню о предстоящих концертах.\n\n"
+                await message.answer(
+        "Привет. Я напомню о предстоящих концертах.\n\n"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
+        reply_markup=keyboard,
+    )еть афишу и включить напоминание.",
         reply_markup=keyboard,
     )
 

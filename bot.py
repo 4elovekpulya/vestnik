@@ -65,7 +65,10 @@ cur.execute(
 db.commit()
 
 # ===== КНОПКИ =====
-def concert_keyboard(concert_id: int, user_id: int):
+
+# состояние добавления концерта администратором
+ADMIN_ADD_MODE = {}
+def concert_keyboard(concert_id: int, user_id: int):(concert_id: int, user_id: int):
     cur.execute(
         "SELECT 1 FROM subscriptions WHERE user_id = ? AND concert_id = ?",
         (user_id, concert_id),
@@ -94,7 +97,7 @@ def concert_keyboard(concert_id: int, user_id: int):
             )
         )
 
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+        return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
 # ===== ВСПОМОГАТЕЛЬНО =====
@@ -181,11 +184,16 @@ async def send_reminder(concert_id: int):
 # ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]
-        ]
-    )
+    buttons = [
+        [InlineKeyboardButton(text="Показать концерты", callback_data="show_concerts")]
+    ]
+
+    if message.from_user.id == ADMIN_ID:
+        buttons.append(
+            [InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")]
+        )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await message.answer(
         "Привет. Я напомню о предстоящих концертах.\n\n"
@@ -203,10 +211,27 @@ async def show_concerts(call: CallbackQuery):
     )
     concerts = cur.fetchall()
 
-    if not concerts:
+    rows = [
+        [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
+        for cid, desc in concerts
+    ]
+
+    if call.from_user.id == ADMIN_ID:
+        rows.append(
+            [InlineKeyboardButton(text="➕ Добавить концерт", callback_data="admin_add")]
+        )
+
+    if not rows:
         await call.message.delete()
         await call.message.answer("Пока нет запланированных концертов.")
         await call.answer()
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    await call.message.delete()
+    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
+    await call.answer()
         return
 
     keyboard = InlineKeyboardMarkup(
@@ -222,15 +247,54 @@ async def show_concerts(call: CallbackQuery):
     await call.answer()
 
 
+# ===== CALLBACK: ДОБАВИТЬ КОНЦЕРТ (admin) =====
+@dp.callback_query(F.data == "admin_add")
+async def admin_add(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer()
+        return
+
+    ADMIN_ADD_MODE[call.from_user.id] = True
+    await call.message.answer(
+        "Введи концерт в формате:\n"
+        "YYYY-MM-DD HH:MM Описание"
+    )
+    await call.answer()
+
+
 # ===== /setconcert (admin) =====
 @dp.message(Command("setconcert"))
 async def set_concert(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    parts = message.text.split(maxsplit=3)
-    if len(parts) < 4:
-        await message.answer("Формат: /setconcert YYYY-MM-DD HH:MM Описание")
+    text = message.text.replace("/setconcert", "").strip()
+    parts = text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Формат: YYYY-MM-DD HH:MM Описание")
+        return
+
+    date_str, time_str, description = parts
+
+    try:
+        dt = parse_dt(date_str, time_str)
+    except ValueError:
+        await message.answer("Ошибка даты или времени.")
+        return
+
+    cur.execute(
+        "INSERT INTO concerts (datetime, description) VALUES (?, ?)",
+        (dt.isoformat(), description),
+    )
+    concert_id = cur.lastrowid
+    db.commit()
+
+    schedule_concert_reminder(concert_id, dt)
+    PENDING_IMAGE[message.from_user.id] = concert_id
+
+    await message.answer(
+        "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
+    )
         return
 
     date_str, time_str, description = parts[1], parts[2], parts[3]
@@ -250,6 +314,44 @@ async def set_concert(message: Message):
 
     schedule_concert_reminder(concert_id, dt)
     PENDING_IMAGE[message.from_user.id] = concert_id
+
+    await message.answer(
+        "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
+    )
+
+
+# ===== ВВОД КОНЦЕРТА ЧЕРЕЗ КНОПКУ (admin) =====
+@dp.message(F.text)
+async def admin_add_text(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    if not ADMIN_ADD_MODE.get(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Формат: YYYY-MM-DD HH:MM Описание")
+        return
+
+    date_str, time_str, description = parts
+
+    try:
+        dt = parse_dt(date_str, time_str)
+    except ValueError:
+        await message.answer("Ошибка даты или времени.")
+        return
+
+    cur.execute(
+        "INSERT INTO concerts (datetime, description) VALUES (?, ?)",
+        (dt.isoformat(), description),
+    )
+    concert_id = cur.lastrowid
+    db.commit()
+
+    schedule_concert_reminder(concert_id, dt)
+    PENDING_IMAGE[message.from_user.id] = concert_id
+    ADMIN_ADD_MODE.pop(message.from_user.id, None)
 
     await message.answer(
         "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."

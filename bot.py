@@ -65,14 +65,6 @@ cur.execute(
 db.commit()
 
 # ===== КНОПКИ =====
-def select_concert_keyboard(concert_id: int, title: str):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=title, callback_data=f"concert:{concert_id}")]
-        ]
-    )
-
-
 def concert_keyboard(concert_id: int, user_id: int):
     cur.execute(
         "SELECT 1 FROM subscriptions WHERE user_id = ? AND concert_id = ?",
@@ -86,22 +78,15 @@ def concert_keyboard(concert_id: int, user_id: int):
     )
     count = cur.fetchone()[0]
 
-    buttons = []
-
-    # кнопка возврата к списку концертов
-    buttons.append(
+    buttons = [
         InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")
-    )
+    ]
 
     if is_subscribed:
-        buttons.append(
-            InlineKeyboardButton(text="Напоминание включено", callback_data="noop")
-        )
-        buttons.append(
-            InlineKeyboardButton(
-                text="Отписаться", callback_data=f"unsub:{concert_id}"
-            )
-        )
+        buttons.extend([
+            InlineKeyboardButton(text="Напоминание включено", callback_data="noop"),
+            InlineKeyboardButton(text="Отписаться", callback_data=f"unsub:{concert_id}"),
+        ])
     else:
         buttons.append(
             InlineKeyboardButton(
@@ -231,61 +216,9 @@ async def show_concerts(call: CallbackQuery):
         ]
     )
 
-    await call.message.delete()
-    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
-    await call.answer()
-
-
-
-@dp.callback_query(F.data == "show_concerts")
-async def show_concerts(call: CallbackQuery):
-    cur.execute(
-        "SELECT id, description FROM concerts WHERE datetime > ? ORDER BY datetime",
-        (now_moscow().isoformat(),),
-    )
-    concerts = cur.fetchall()
-
-    if not concerts:
-        await call.message.delete()
-        await call.message.answer("Пока нет запланированных концертов.")
-        await call.answer()
-        return
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
-            for cid, desc in concerts
-        ]
-    )
-
     # всегда удаляем текущее сообщение (и текст, и медиа)
     await call.message.delete()
     await call.message.answer("Выбери концерт:", reply_markup=keyboard)
-    await call.answer()
-        return
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
-            for cid, desc in concerts
-        ]
-    )
-
-    # важно: если текущее сообщение с картинкой, edit_text не сработает
-    # поэтому удаляем сообщение и отправляем новое
-    await call.message.delete()
-    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
-    await call.answer()
-        return
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
-            for cid, desc in concerts
-        ]
-    )
-
-    await call.message.edit_text("Выбери концерт:", reply_markup=keyboard)
     await call.answer()
 
 

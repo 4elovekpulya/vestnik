@@ -60,14 +60,8 @@ def concert_keyboard(concert_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="Напомнить",
-                    callback_data=f"sub:{concert_id}"
-                ),
-                InlineKeyboardButton(
-                    text="Отписаться",
-                    callback_data=f"unsub:{concert_id}"
-                )
+                InlineKeyboardButton("Напомнить", callback_data=f"sub:{concert_id}"),
+                InlineKeyboardButton("Отписаться", callback_data=f"unsub:{concert_id}")
             ]
         ]
     )
@@ -77,6 +71,16 @@ def parse_dt(date_str, time_str):
     return datetime.strptime(
         f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
     ).replace(tzinfo=MOSCOW_TZ)
+
+def now_moscow():
+    return datetime.now(MOSCOW_TZ)
+
+def get_subscribers_count(concert_id: int) -> int:
+    cur.execute(
+        "SELECT COUNT(*) FROM subscriptions WHERE concert_id = ?",
+        (concert_id,)
+    )
+    return cur.fetchone()[0]
 
 async def send_reminder(concert_id: int, text: str):
     cur.execute(
@@ -94,7 +98,12 @@ async def send_reminder(concert_id: int, text: str):
 # ===== КОМАНДЫ =====
 @dp.message(Command("start"))
 async def start(message: Message):
-    cur.execute("SELECT id, datetime, description FROM concerts ORDER BY datetime")
+    cur.execute(
+        "SELECT id, datetime, description FROM concerts "
+        "WHERE datetime > ? "
+        "ORDER BY datetime",
+        (now_moscow().isoformat(),)
+    )
     concerts = cur.fetchall()
 
     if not concerts:
@@ -119,14 +128,12 @@ async def set_concert(message: Message):
         await message.answer("Формат: /setconcert YYYY-MM-DD HH:MM Описание")
         return
 
-    date_str = parts[1]
-    time_str = parts[2]
-    description = parts[3]
+    date_str, time_str, description = parts[1], parts[2], parts[3]
 
     try:
         dt = parse_dt(date_str, time_str)
     except ValueError:
-        await message.answer("Ошибка даты или времени. Пример: 2026-02-15 19:30")
+        await message.answer("Ошибка даты или времени.")
         return
 
     cur.execute(
@@ -136,7 +143,6 @@ async def set_concert(message: Message):
     concert_id = cur.lastrowid
     db.commit()
 
-    # Напоминание в день концерта в 11:00
     scheduler.add_job(
         send_reminder,
         trigger="date",
@@ -144,7 +150,6 @@ async def set_concert(message: Message):
         args=[concert_id, f"Сегодня концерт!\n\n{description}"]
     )
 
-    # Напоминание за 1.5 часа
     scheduler.add_job(
         send_reminder,
         trigger="date",
@@ -199,7 +204,17 @@ async def show_concert(call: CallbackQuery):
     dt_str, desc, image_id = row
     dt = datetime.fromisoformat(dt_str)
 
-    text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
+    if dt < now_moscow():
+        await call.answer("Этот концерт уже прошёл", show_alert=True)
+        return
+
+    count = get_subscribers_count(concert_id)
+
+    text = (
+        f"{desc}\n\n"
+        f"📅 {dt.strftime('%d.%m.%Y %H:%M')}\n"
+        f"👥 Подписались: {count}"
+    )
 
     if image_id:
         await call.message.answer_photo(
@@ -220,12 +235,32 @@ async def subscribe(call: CallbackQuery):
     concert_id = int(call.data.split(":")[1])
 
     cur.execute(
+        "SELECT datetime FROM concerts WHERE id = ?",
+        (concert_id,)
+    )
+    row = cur.fetchone()
+
+    if not row:
+        await call.answer("Концерт не найден", show_alert=True)
+        return
+
+    dt = datetime.fromisoformat(row[0])
+    if dt < now_moscow():
+        await call.answer("Этот концерт уже прошёл", show_alert=True)
+        return
+
+    cur.execute(
         "INSERT OR IGNORE INTO subscriptions VALUES (?, ?, ?)",
-        (call.from_user.id, concert_id, datetime.now(MOSCOW_TZ).isoformat())
+        (call.from_user.id, concert_id, now_moscow().isoformat())
     )
     db.commit()
 
-    await call.answer("Напоминание включено", show_alert=True)
+    count = get_subscribers_count(concert_id)
+
+    await call.answer(
+        f"Напоминание включено. Подписались: {count}",
+        show_alert=True
+    )
 
 @dp.callback_query(F.data.startswith("unsub:"))
 async def unsubscribe(call: CallbackQuery):
@@ -237,7 +272,12 @@ async def unsubscribe(call: CallbackQuery):
     )
     db.commit()
 
-    await call.answer("Вы отписались", show_alert=True)
+    count = get_subscribers_count(concert_id)
+
+    await call.answer(
+        f"Вы отписались. Подписались: {count}",
+        show_alert=True
+    )
 
 # ===== ЗАПУСК =====
 async def main():

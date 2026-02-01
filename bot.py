@@ -10,6 +10,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
+    InputMediaPhoto,
 )
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -24,7 +25,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
 
-# ===== БАЗА ДАННЫХ =====
+# ===== БАЗА =====
 db = sqlite3.connect("concerts.db", check_same_thread=False)
 cur = db.cursor()
 
@@ -57,11 +58,23 @@ def select_concert_keyboard(concert_id: int, title: str):
     )
 
 def concert_keyboard(concert_id: int):
+    cur.execute(
+        "SELECT COUNT(*) FROM subscriptions WHERE concert_id = ?",
+        (concert_id,)
+    )
+    count = cur.fetchone()[0]
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton("Напомнить", callback_data=f"sub:{concert_id}"),
-                InlineKeyboardButton("Отписаться", callback_data=f"unsub:{concert_id}")
+                InlineKeyboardButton(
+                    text=f"Напомнить ({count})",
+                    callback_data=f"sub:{concert_id}"
+                ),
+                InlineKeyboardButton(
+                    text="Отписаться",
+                    callback_data=f"unsub:{concert_id}"
+                )
             ]
         ]
     )
@@ -71,16 +84,6 @@ def parse_dt(date_str, time_str):
     return datetime.strptime(
         f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
     ).replace(tzinfo=MOSCOW_TZ)
-
-def now_moscow():
-    return datetime.now(MOSCOW_TZ)
-
-def get_subscribers_count(concert_id: int) -> int:
-    cur.execute(
-        "SELECT COUNT(*) FROM subscriptions WHERE concert_id = ?",
-        (concert_id,)
-    )
-    return cur.fetchone()[0]
 
 async def send_reminder(concert_id: int, text: str):
     cur.execute(
@@ -95,14 +98,14 @@ async def send_reminder(concert_id: int, text: str):
         except Exception:
             pass
 
-# ===== КОМАНДЫ =====
+# ===== /start =====
 @dp.message(Command("start"))
 async def start(message: Message):
+    now = datetime.now(MOSCOW_TZ).isoformat()
+
     cur.execute(
-        "SELECT id, datetime, description FROM concerts "
-        "WHERE datetime > ? "
-        "ORDER BY datetime",
-        (now_moscow().isoformat(),)
+        "SELECT id, description FROM concerts WHERE datetime > ? ORDER BY datetime",
+        (now,)
     )
     concerts = cur.fetchall()
 
@@ -112,12 +115,13 @@ async def start(message: Message):
 
     await message.answer("Выбери концерт:")
 
-    for concert_id, dt_str, desc in concerts:
+    for concert_id, desc in concerts:
         await message.answer(
             desc,
             reply_markup=select_concert_keyboard(concert_id, desc)
         )
 
+# ===== /setconcert (admin) =====
 @dp.message(Command("setconcert"))
 async def set_concert(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -161,18 +165,16 @@ async def set_concert(message: Message):
         "Концерт добавлен.\n\nТеперь пришли картинку ответом на это сообщение."
     )
 
+# ===== СОХРАНЕНИЕ КАРТИНКИ =====
 @dp.message(F.photo)
 async def save_image(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    cur.execute(
-        "SELECT id FROM concerts ORDER BY id DESC LIMIT 1"
-    )
+    cur.execute("SELECT id FROM concerts ORDER BY id DESC LIMIT 1")
     row = cur.fetchone()
 
     if not row:
-        await message.answer("Нет концерта, к которому можно привязать картинку.")
         return
 
     concert_id = row[0]
@@ -184,16 +186,20 @@ async def save_image(message: Message):
     )
     db.commit()
 
-    await message.answer("Картинка сохранена для последнего концерта.")
+    await message.answer("Картинка сохранена для концерта.")
 
-# ===== CALLBACKS =====
+# ===== CALLBACK: ВЫБОР КОНЦЕРТА =====
 @dp.callback_query(F.data.startswith("concert:"))
 async def show_concert(call: CallbackQuery):
     concert_id = int(call.data.split(":")[1])
 
     cur.execute(
-        "SELECT datetime, description, image_file_id FROM concerts WHERE id = ?",
-        (concert_id,)
+        """
+        SELECT datetime, description, image_file_id
+        FROM concerts
+        WHERE id = ? AND datetime > ?
+        """,
+        (concert_id, datetime.now(MOSCOW_TZ).isoformat())
     )
     row = cur.fetchone()
 
@@ -204,64 +210,41 @@ async def show_concert(call: CallbackQuery):
     dt_str, desc, image_id = row
     dt = datetime.fromisoformat(dt_str)
 
-    if dt < now_moscow():
-        await call.answer("Этот концерт уже прошёл", show_alert=True)
-        return
-
-    count = get_subscribers_count(concert_id)
-
-    text = (
-        f"{desc}\n\n"
-        f"📅 {dt.strftime('%d.%m.%Y %H:%M')}\n"
-        f"👥 Подписались: {count}"
-    )
+    text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
 
     if image_id:
-        await call.message.answer_photo(
-            photo=image_id,
-            caption=text,
+        await call.message.edit_media(
+            InputMediaPhoto(
+                media=image_id,
+                caption=text
+            ),
             reply_markup=concert_keyboard(concert_id)
         )
     else:
-        await call.message.answer(
+        await call.message.edit_text(
             text,
             reply_markup=concert_keyboard(concert_id)
         )
 
     await call.answer()
 
+# ===== CALLBACK: ПОДПИСКА =====
 @dp.callback_query(F.data.startswith("sub:"))
 async def subscribe(call: CallbackQuery):
     concert_id = int(call.data.split(":")[1])
 
     cur.execute(
-        "SELECT datetime FROM concerts WHERE id = ?",
-        (concert_id,)
-    )
-    row = cur.fetchone()
-
-    if not row:
-        await call.answer("Концерт не найден", show_alert=True)
-        return
-
-    dt = datetime.fromisoformat(row[0])
-    if dt < now_moscow():
-        await call.answer("Этот концерт уже прошёл", show_alert=True)
-        return
-
-    cur.execute(
         "INSERT OR IGNORE INTO subscriptions VALUES (?, ?, ?)",
-        (call.from_user.id, concert_id, now_moscow().isoformat())
+        (call.from_user.id, concert_id, datetime.now(MOSCOW_TZ).isoformat())
     )
     db.commit()
 
-    count = get_subscribers_count(concert_id)
-
-    await call.answer(
-        f"Напоминание включено. Подписались: {count}",
-        show_alert=True
+    await call.message.edit_reply_markup(
+        reply_markup=concert_keyboard(concert_id)
     )
+    await call.answer("Вы подписались")
 
+# ===== CALLBACK: ОТПИСКА =====
 @dp.callback_query(F.data.startswith("unsub:"))
 async def unsubscribe(call: CallbackQuery):
     concert_id = int(call.data.split(":")[1])
@@ -272,12 +255,10 @@ async def unsubscribe(call: CallbackQuery):
     )
     db.commit()
 
-    count = get_subscribers_count(concert_id)
-
-    await call.answer(
-        f"Вы отписались. Подписались: {count}",
-        show_alert=True
+    await call.message.edit_reply_markup(
+        reply_markup=concert_keyboard(concert_id)
     )
+    await call.answer("Вы отписались")
 
 # ===== ЗАПУСК =====
 async def main():

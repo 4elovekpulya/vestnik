@@ -230,13 +230,6 @@ async def show_concerts(call: CallbackQuery):
     await call.message.delete()
     await call.message.answer("Выбери концерт:", reply_markup=keyboard)
     await call.answer()
-        return
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-
-    await call.message.delete()
-    await call.message.answer("Выбери концерт:", reply_markup=keyboard)
-    await call.answer()
 
 
 # ===== CALLBACK: ДОБАВИТЬ КОНЦЕРТ (admin) =====

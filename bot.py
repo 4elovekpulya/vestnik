@@ -202,10 +202,8 @@ async def start(message: Message):
         ]
     )
 
-        await message.answer(
-        "Привет. Я напомню о предстоящих концертах.
-
-"
+    await message.answer(
+        "Привет. Я напомню о предстоящих концертах.\n\n"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
     )

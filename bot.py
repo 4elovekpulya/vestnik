@@ -88,6 +88,11 @@ def concert_keyboard(concert_id: int, user_id: int):
 
     buttons = []
 
+    # кнопка возврата к списку концертов
+    buttons.append(
+        InlineKeyboardButton(text="Все концерты", callback_data="show_concerts")
+    )
+
     if is_subscribed:
         buttons.append(
             InlineKeyboardButton(text="Напоминание включено", callback_data="noop")
@@ -197,8 +202,10 @@ async def start(message: Message):
         ]
     )
 
-    await message.answer(
-        "Привет. Я напомню о предстоящих концертах.\n\n"
+        await message.answer(
+        "Привет. Я напомню о предстоящих концертах.
+
+"
         "Нажми кнопку ниже, чтобы посмотреть афишу и включить напоминание.",
         reply_markup=keyboard,
     )

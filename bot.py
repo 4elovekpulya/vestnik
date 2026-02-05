@@ -132,13 +132,16 @@ def schedule_concert_reminder(concert_id: int, concert_dt: datetime):
 
 def restore_scheduler_from_db():
     cur.execute(
-        "SELECT id, datetime FROM concerts WHERE datetime > ?",
-        (now_moscow().isoformat(),),
+        "SELECT id, datetime FROM concerts",
     )
     for concert_id, dt_str in cur.fetchall():
         try:
             dt = datetime.fromisoformat(dt_str)
         except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=MOSCOW_TZ)
+        if dt <= now_moscow():
             continue
         schedule_concert_reminder(concert_id, dt)
 
@@ -154,6 +157,8 @@ async def send_reminder(concert_id: int):
 
     image_id, description, dt_str = row
     dt = datetime.fromisoformat(dt_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=MOSCOW_TZ)
 
     text = (
         "Скоро концерт!\n\n"
@@ -206,6 +211,8 @@ async def render_concert(chat, concert_id: int, user_id: int):
 
     dt_str, desc, image_id = row
     dt = datetime.fromisoformat(dt_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=MOSCOW_TZ)
 
     if dt <= now_moscow():
         keyboard = InlineKeyboardMarkup(
@@ -268,10 +275,18 @@ async def start(message: Message):
 @dp.callback_query(F.data == "show_concerts")
 async def show_concerts(call: CallbackQuery):
     cur.execute(
-        "SELECT id, description FROM concerts WHERE datetime > ? ORDER BY datetime",
-        (now_moscow().isoformat(),),
+        "SELECT id, description, datetime FROM concerts ORDER BY datetime",
     )
-    concerts = cur.fetchall()
+    concerts = []
+    for cid, desc, dt_str in cur.fetchall():
+        try:
+            dt = datetime.fromisoformat(dt_str)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=MOSCOW_TZ)
+        if dt > now_moscow():
+            concerts.append((cid, desc))
 
     rows = [
         [InlineKeyboardButton(text=desc, callback_data=f"concert:{cid}")]
@@ -427,9 +442,9 @@ async def show_concert(call: CallbackQuery):
         """
         SELECT datetime, description, image_file_id
         FROM concerts
-        WHERE id = ? AND datetime > ?
+        WHERE id = ?
         """,
-        (concert_id, now_moscow().isoformat()),
+        (concert_id,),
     )
     row = cur.fetchone()
 
@@ -439,6 +454,11 @@ async def show_concert(call: CallbackQuery):
 
     dt_str, desc, image_id = row
     dt = datetime.fromisoformat(dt_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=MOSCOW_TZ)
+    if dt <= now_moscow():
+        await call.answer("Концерт не найден", show_alert=True)
+        return
 
     text = f"{desc}\n\n📅 {dt.strftime('%d.%m.%Y %H:%M')}"
 

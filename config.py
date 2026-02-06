@@ -28,6 +28,6 @@ def load_config() -> Config:
     if not token:
         raise RuntimeError("BOT_TOKEN is required")
     admin_ids = _parse_admin_ids(os.getenv("ADMIN_IDS"))
-    db_path = os.getenv("DB_PATH", "events.db")
+    db_path = os.getenv("DB_PATH", "/data/events.db")
     timezone = ZoneInfo("Europe/Moscow")
     return Config(token=token, admin_ids=admin_ids, db_path=db_path, timezone=timezone)
